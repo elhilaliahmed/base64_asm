@@ -1,4 +1,4 @@
-;NASM x86 asm
+; NASM x86 asm
 
 SECTION .data
 inv_args db 'Invalid Parameters. Try ./base64 --help', 0Ah, 0h
@@ -157,9 +157,16 @@ enc_text:			; encoding routine if text is provided
 	push dword [ebp + 16]
 	push eax
 	call encode_b64
+	pop ecx
+	pop ecx
+	push ebx
+	push eax
+	call print
 	call exit
 
 ; base64 encoding algorithm
+; result buffer is returned in eax
+; length of result buffer is in ebx
 ; acepts 2 parameters
 ; first address of string is pushed on stack
 ; secondly the length of string is pushed
@@ -185,7 +192,7 @@ there:
 	add eax, [ebp - 4]		; original length + padding
 	xor edx, edx
 	div ecx				; dividing the original + padding by 3 and multiplying by 4
-	inc ecx				; this will give us the length os resulting encoded string
+	inc ecx				; this will give us the length of resulting encoded string
 	mul ecx
 	cmp edx, 0
 	jne stop
@@ -196,11 +203,67 @@ there:
 	pop ecx
 	mov esi, [ebp + 12]		; string to be encoded
 	mov edi, [mem_start]		; result buffer
-	mov edx, b64_chars
-	call encode_loop
 
 encode_loop:
-	; To Implement 
+	cmp dword [ebp + 8], 0		; checking if original string has ended
+	je pad_result			; pad the result if string has ended
+	xor eax, eax
+	mov ah, byte [esi]		; mov first to ah
+	inc esi
+	shl eax, 8			; shift the first byte to left 8 bits
+	mov ah, byte [esi]		; move second and third byte to ah and al respectively
+	mov al, byte [esi + 1]		; now eax contains three bytes in intended order
+	add esi, 2
+	mov ebx, eax			; eax is copied to 3 registers as there will be 4 resulting bytes
+	mov ecx, eax
+	mov edx, eax
+	shr eax, 18			; gives the first 6 bytes
+	shr ebx, 12			; 2nd 6 bytes combination is at the end of regisster and similarly further
+	shr ecx, 6
+	and eax, 63			; and with 63 so last 6 bits will only get and'ed 
+	and ebx, 63
+	and ecx, 63
+	and edx, 63			; we will have 4 bytes in eax, ebx, ecx, edx. these bytes will act as offset in b64_chars
+	add eax, b64_chars		; address of first encoded byte
+	mov al , byte [eax]
+	mov byte [edi], al
+	inc edi
+	mov eax, ebx
+	add ebx, b64_chars		; address of 2nd encoded byte
+	mov bl, byte [ebx]
+	mov byte [edi], bl
+	inc edi
+	cmp dword [ebp + 8], 1		; comparing the length left of original string, if its one then that means everything has been encoded
+	je pad_result
+	add ecx, b64_chars		; address of 3rd byte
+	mov cl, byte [ecx]
+	mov byte [edi], cl
+	inc edi
+	cmp dword [ebp + 8], 2		; check if the length left of original sstring is 2, if true then no need to find 4th byte
+	je pad_result
+	add edx, b64_chars		; address of 4th byte
+	mov dl, byte [edx]
+	mov byte [edi], dl
+	inc edi
+	sub dword [ebp + 8], 3		; subtract 3 from original string length
+	jmp encode_loop			; loop
+
+pad_result:
+	cmp dword [ebp - 4], 0
+	je encoded
+	mov byte [edi], '='		; padding '='
+	inc edi
+	dec dword [ebp - 4]
+	jmp pad_result
+
+encoded:
+	mov byte [edi], 0Ah
+	mov eax, dword [mem_start]	; address of result buffer will be in eax
+	mov ebx ,dword [ebp - 8]	; length of result buffer
+	leave
+	ret
+
+; base 64 encoding function ends here
 
 enc_file:
 
