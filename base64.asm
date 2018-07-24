@@ -14,6 +14,7 @@ text_param db '-t', 0h
 file_param db '-f', 0h
 b64_chars db 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', 0h
 mem_start dd 0h
+file_desc dd 0h
 
 SECTION .text
 
@@ -48,6 +49,7 @@ exit:
 	int 80h		; exit syscall
 	ret
 
+; stringcmp related labels begin here
 stringcmp:
 	push ebp			; strcmp like implementation in asm
 	mov ebp, esp			; function accepts three arguements
@@ -80,6 +82,9 @@ string_not_eq:
 	pop ebp
 	ret
 
+; stringcmp related labels end here
+
+; stringlen related labels begin here
 stringlen:
 	mov ebx, [esp + 4]	; implementation like strlen function
 
@@ -94,7 +99,37 @@ len_found:
 	mov eax, ebx
 	ret
 
-allocate_mem:
+; stringlen related labels end here
+
+
+find_c_in_s:
+	push ebp
+	mov ebp, esp
+	push ebx
+	push ecx
+	push edx
+	xor eax, eax
+	mov ebx, dword [ebp + 8]
+	mov ecx, dword [ebp + 12]
+find_c_in_s_loop:
+	cmp byte [ebx], cl
+	je found_pos
+	inc eax
+	cmp eax, 65
+	je find_not_found
+	inc ebx
+	jmp find_c_in_s_loop
+find_not_found:
+	xor eax, eax
+found_pos:
+	pop edx
+	pop ecx
+	pop ebx
+	leave
+	ret
+
+
+allocate_mem:			; Need to improve this to allocate multiple buffers otherwise can't operate on files as it requires 2 buffers
 	xor ebx, ebx
 	mov eax, 45 		; syscall number for sys_brk
 	int 0x80		; first syscall gets the address of break point
@@ -106,10 +141,9 @@ allocate_mem:
 	ret
 
 args_correct:
-	mov ebx, [ebp + 8]
 	push encod_param		; base address of first string
 	push dword [param_len]		; length of first string
-	push ebx			; base address of 2nd string to be compared
+	push dword [ebp + 8]			; base address of 2nd string to be compared
 	call stringcmp
 	pop ecx			; pop args from stack
 	pop ecx
@@ -118,7 +152,7 @@ args_correct:
 	je enc_routine
 	push decod_param
 	push dword [param_len]
-	push ebx
+	push dword [ebp + 8]
 	call stringcmp
 	pop ecx
 	pop ecx
@@ -128,30 +162,19 @@ args_correct:
 	jmp invalid
 
 enc_routine:
-	mov ebx, [ebp + 12]
 	push text_param
 	push dword [param_len]
-	push ebx
+	push dword [ebp + 12]
 	call stringcmp
 	pop ecx
 	pop ecx
 	pop ecx
 	cmp eax, 0			; checking if text param is provided
 	je enc_text
-	push file_param
-	push dword [param_len]
-	push ebx
-	call stringcmp
-	pop ecx
-	pop ecx
-	pop ecx
-	cmp eax, 0			; checking for the file param
-	je enc_file
 	jmp invalid
 
 enc_text:			; encoding routine if text is provided
-	mov ebx, [ebp + 16]
-	push ebx			; base address of string
+	push dword [ebp + 16]			; base address of string
 	call stringlen
 	pop ecx
 	push dword [ebp + 16]
@@ -163,6 +186,33 @@ enc_text:			; encoding routine if text is provided
 	push eax
 	call print
 	call exit
+	ret
+
+dec_routine:
+        push text_param
+        push dword [param_len]
+        push dword [ebp + 12]
+        call stringcmp
+        pop ecx
+        pop ecx
+        pop ecx
+	cmp eax, 0
+	je dec_text
+	jmp invalid
+
+dec_text:
+        push dword [ebp + 16]                   ; base address of string
+        call stringlen
+        pop ecx
+	push dword [ebp + 16]
+	push eax
+	call decode_b64
+	add esp, 8
+	push ebx
+	push eax
+	call print
+	call exit
+
 
 ; base64 encoding algorithm
 ; result buffer is returned in eax
@@ -172,6 +222,7 @@ enc_text:			; encoding routine if text is provided
 ; secondly the length of string is pushed
 ; so that makes length the first arguement and address as second 
 ; because length will be on top as happens in cases of all library functions
+; this function itself allocates memory for resulting string, probably will make this better later
 
 encode_b64:
 	push ebp
@@ -217,8 +268,8 @@ encode_loop:
 	mov ebx, eax			; eax is copied to 3 registers as there will be 4 resulting bytes
 	mov ecx, eax
 	mov edx, eax
-	shr eax, 18			; gives the first 6 bytes
-	shr ebx, 12			; 2nd 6 bytes combination is at the end of regisster and similarly further
+	shr eax, 18			; gives the first 6 bitss
+	shr ebx, 12			; 2nd 6 bits combination is at the end of regisster and similarly further
 	shr ecx, 6
 	and eax, 63			; and with 63 so last 6 bits will only get and'ed 
 	and ebx, 63
@@ -265,11 +316,112 @@ encoded:
 
 ; base 64 encoding function ends here
 
-enc_file:
 
-dec_routine:
+; base64 decoding
 
-stop:
+decode_b64:
+	push ebp		; below ebp first is the length and then base address
+	mov ebp, esp
+	sub esp, 8
+	mov eax, [ebp + 8]	; length of encoded string
+	xor edx, edx
+	mov ecx, 4
+	div ecx			; dividing length by 4
+	dec ecx
+	mul ecx			; multiply by 3, now length of original string is in eax, need to subtract '=' if encoded string is padded
+	cmp edx, 0
+	jne stop
+	inc eax			; inc eax cuz why not
+	mov [ebp - 4], eax	; storing original + padding locally
+	mov ebx, dword [ebp + 12]
+	add ebx, [ebp + 8]	; going to the end of encoded string by adding len to base address to check for padding
+	xor ecx, ecx
+	dec ebx			; go one before null
+  loc_dec_loop:
+	cmp byte [ebx], '='
+	jne p_len_found
+	dec ebx
+	inc ecx			; padding len in ecx
+	jmp loc_dec_loop
+p_len_found:
+	mov dword [ebp - 8], ecx	; storing padding locally on stack
+	push dword [ebp - 4]
+	call allocate_mem	; allocated mem in mem_start
+	dec dword [ebp - 4]	; 1 byte was allocated extra for newline char, dec'ing length to not mess the decoding
+	pop ebx			; after this instruction, encoded string is in [ebp + 12], len of of encoded str [ebp + 8]
+	mov esi, [ebp + 12]	; len of result is in [ebp - 4], padding in [ebp -8]
+	mov edi, [mem_start]
+	mov eax, dword [ebp -8]
+	sub dword [ebp - 4], eax	; subtract paddding from result padding
+	push dword [ebp-4]
+
+decoding_loop:
+	cmp dword [esp], 0
+	je decoded
+	mov eax, 0
+	mov ebx, eax
+	mov ecx, ebx
+	mov edx, ecx
+	mov al, byte [esi]		; moving 4 bytes to 4 registers respectively
+	mov bl, byte [esi + 1]
+	mov cl, byte [esi + 2]
+	mov dl, byte [esi + 3]
+	push eax			; finding position of first character in base64 array which will be the first 6 bits of the decoded result
+	push b64_chars
+	call find_c_in_s
+	add esp, 8
+	push eax		; pushing first 6 bits on stack bcuz need those registers to do stuff
+	push ebx
+	push b64_chars		; finding position of 2nd char
+	call find_c_in_s
+	add esp, 8
+	mov ebx, eax		; 6-12 bits in ebx
+	push ecx
+	push b64_chars		; finding position of 3rd char
+	call find_c_in_s
+	add esp, 8
+	mov ecx, eax		; 12-18 bits in ecx
+	push edx
+	push b64_chars		; finding position of 4th char
+	call find_c_in_s
+	add esp, 8
+	mov edx, eax		; 18-24 bits in edx
+	pop eax			; 0-6 bits in eax again
+	shl eax, 18		; building the 24 bits original string
+	shl ebx, 12
+	shl ecx, 6
+	or eax, ebx
+	or eax, ecx
+	or eax, edx
+	mov ebx, eax
+	shr ebx, 16
+	mov byte [edi], bl	; bl contains the first byte , moving it to result buffer
+	inc edi
+	dec dword [esp]
+	cmp dword [esp], 0	; checking if we have filled the whole original string, if yes then decoding completed
+	je decoded
+	mov byte [edi], ah	; moving 2nd byte to result buffer
+	inc edi
+	dec dword [esp]
+	cmp dword [esp], 0
+	je decoded
+	mov byte [edi], al	; moving 3rd byte to result buffer
+	inc edi
+	dec dword [esp]
+	add esi, 4
+	jmp decoding_loop
+decoded:
+	pop ebx
+	inc dword [ebp - 4]		; accounting for newline
+	mov byte [edi], 0Ah
+	mov ebx, dword [ebp - 4]	; moving length of result buffer
+	mov eax, dword [mem_start]	; moving base address of result buffer
+	leave				; restore stack to previous stack frame state
+	ret
+
+stop:		; Something is not right, Size too high
+	call exit
+	ret
 
 ; Function related to --help param
 
@@ -290,3 +442,4 @@ help_func:
 	pop ecx
 	pop ecx
 	call exit
+	ret
