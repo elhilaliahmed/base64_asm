@@ -31,8 +31,7 @@ invalid:				; executed if invalid arguements are passed to the application
 	push dword [inv_args_len]	; length of data to print
 	push inv_args			; base address of string to print
 	call print
-	pop ecx
-	pop ecx
+	add esp, 8
 	call exit
 
 print:
@@ -145,18 +144,14 @@ args_correct:
 	push dword [param_len]		; length of first string
 	push dword [ebp + 8]			; base address of 2nd string to be compared
 	call stringcmp
-	pop ecx			; pop args from stack
-	pop ecx
-	pop ecx
+	add esp, 12			; pop args from stack
 	cmp eax, 0			; checking wheather to encode here
 	je enc_routine
 	push decod_param
 	push dword [param_len]
 	push dword [ebp + 8]
 	call stringcmp
-	pop ecx
-	pop ecx
-	pop ecx
+	add esp, 12
 	cmp eax, 0			; checking here to see if to decode
 	je dec_routine
 	jmp invalid
@@ -166,9 +161,7 @@ enc_routine:
 	push dword [param_len]
 	push dword [ebp + 12]
 	call stringcmp
-	pop ecx
-	pop ecx
-	pop ecx
+	add esp, 12
 	cmp eax, 0			; checking if text param is provided
 	je enc_text
 	jmp invalid
@@ -180,11 +173,11 @@ enc_text:			; encoding routine if text is provided
 	push dword [ebp + 16]
 	push eax
 	call encode_b64
-	pop ecx
-	pop ecx
+	add esp, 12
 	push ebx
 	push eax
 	call print
+	add esp, 8
 	call exit
 	ret
 
@@ -193,9 +186,7 @@ dec_routine:
         push dword [param_len]
         push dword [ebp + 12]
         call stringcmp
-        pop ecx
-        pop ecx
-        pop ecx
+        add esp, 12
 	cmp eax, 0
 	je dec_text
 	jmp invalid
@@ -212,6 +203,7 @@ dec_text:
 	push eax
 	call print
 	call exit
+	ret
 
 
 ; base64 encoding algorithm
@@ -431,15 +423,12 @@ help_func:
 	push dword [help_param_len]
 	push ebx
 	call stringcmp
-	pop ebx
-	pop ebx
-	pop ebx
+	add esp, 12
 	cmp eax, 0
 	jne invalid
 	push dword [help_args_len]
 	push help_args
 	call print
-	pop ecx
-	pop ecx
+	add esp, 12
 	call exit
 	ret
